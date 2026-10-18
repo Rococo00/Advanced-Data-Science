@@ -1,0 +1,250 @@
+---
+title: "Which is the best team ever in Italian soccer?"
+author: "Rocco Gregori"
+output:
+  pdf_document: default
+  html_document: default
+editor_options:
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+# cache results
+knitr::opts_chunk$set(cache=FALSE, echo = TRUE, eval = TRUE, message=FALSE, warning = FALSE, fig.align='center')
+```
+This challenge explores all matches of Italian soccer Serie A league from 1993 to current year. The dataset is contained in the website [football-data.co.uk](http://www.football-data.co.uk/italym.php). 
+
+### Challenges
+1. Think about how to scrape the data from the website, but write no code at this stage.
+1. Ask AI to write code to import data by scraping the website. Select only columns Date, HomeTeam, AwayTeam, FTHG (home team goals), FTAG (away team goals)  and filter rows with a valid (not NA) Date. 
+1. Using dplyr and tidyr packages (no for loops!), compute statistics for every team (matches, wins, loses, draws, points, points per match). Hint: mutate a column with the outcome of the match (for instance, H = home teams wins, A = away team wins, P = draw). Then group by team and outcome (home and away) and hence spread the outcome. Do this step without the use of AI.
+1. Come up with at least 3 data questions on the data at hand. Just write the questions, do not find the answers.
+
+
+
+## Parte 1
+
+Guardando il sito, ho notato che tutti i link ai vari file .csv sono del tipo https://football-data.co.uk/mmz4281/<stagione>/I1.csv  dove <stagione> è un stringa di lunghezza 4 contenente le ultime due cifre di ogni anno che corrisponde alla stagione.
+Ad esempio stagione 2025/2026 sarà 2526.
+
+Quindi potrei generare tutti i link che mi servono ciclando dal 1993 al 2026. e poi creare un dataset che li contenga tutti.
+
+
+## Parte 2
+
+Ho utilizzato l'AI per fare lo scraping, come da istruzioni della challenge
+```{r}
+
+# =============================================================================
+# Scaricare tutte le stagioni della Serie A (dal 1993/94 a oggi)
+# dal sito football-data.co.uk
+#
+# Passaggi:
+#   1. costruisco i link ai file CSV di ogni stagione
+#   2. definisco una funzione che scarica una stagione
+#   3. scarico tutte le stagioni e le unisco
+#   4. sistemo i tipi delle colonne
+#   5. tengo solo le colonne che mi servono
+#   6. controllo il risultato
+#   7. salvo su disco
+# =============================================================================
+
+library(tidyverse)
+
+
+# ---- 1. Link ai file di ogni stagione ----------------------------------------
+
+# Ogni stagione ha un file con un indirizzo di questo tipo:
+#   https://football-data.co.uk/mmz4281/9394/I1.csv
+# dove "9394" indica la stagione 1993/94 e "I1" è la Serie A.
+#
+# NB: quando inizia una nuova stagione, aggiornare l'ultimo anno.
+
+anni_inizio <- 1993:2026
+
+stagioni <- tibble(anno_inizio = anni_inizio) |>
+  mutate(
+    codice   = paste0(substr(anno_inizio, 3, 4), substr(anno_inizio + 1, 3, 4)),
+    url      = paste0("https://football-data.co.uk/mmz4281/", codice, "/I1.csv"),
+    stagione = paste0(anno_inizio, "/", anno_inizio + 1)
+  )
+
+
+# ---- 2. Funzione che scarica una stagione ------------------------------------
+
+scarica_stagione <- function(url, stagione) {
+  message("Scarico la stagione ", stagione)
+
+  # Piccola pausa per non sovraccaricare il sito
+  Sys.sleep(1)
+
+  dati <- read_csv(
+    url,
+    # Leggo tutto come testo: le stagioni hanno colonne diverse
+    # e così non ci sono conflitti quando le unisco
+    col_types = cols(.default = col_character()),
+    # Alcuni file vecchi non sono in UTF-8
+    locale = locale(encoding = "latin1")
+  )
+
+  dati |>
+    # Tolgo le colonne senza nome (in alcuni file ce ne sono di vuote)
+    select(!starts_with("...")) |>
+    # Tolgo le righe vuote in fondo al file
+    filter(!is.na(HomeTeam)) |>
+    # Aggiungo la stagione come prima colonna
+    mutate(Stagione = stagione, .before = 1)
+}
+
+
+# ---- 3. Scarico tutte le stagioni e le unisco --------------------------------
+
+lista_stagioni <- map2(stagioni$url, stagioni$stagione, scarica_stagione)
+
+serie_a <- bind_rows(lista_stagioni)
+
+
+# ---- 4. Sistemo i tipi delle colonne -----------------------------------------
+
+serie_a <- serie_a |>
+  # Le date sono scritte come giorno/mese/anno
+  # (a volte con l'anno a 2 cifre, a volte a 4: dmy() li capisce entrambi)
+  mutate(Date = dmy(Date)) |>
+  # Le colonne che contengono numeri diventano numeriche
+  type_convert()
+
+
+# ---- 5. Tengo solo le colonne che mi servono ---------------------------------
+
+# Salvo il risultato in una nuova tabella ("risultati"):
+# così "serie_a" resta completa e posso rifare la selezione
+# senza dover riscaricare tutto.
+
+risultati <- serie_a |>
+  select(Stagione, Date, HomeTeam, AwayTeam, FTHG, FTAG) |>
+  filter(!is.na(Date))
+
+
+# ---- 6. Controllo veloce -----------------------------------------------------
+
+# Quante partite per stagione?
+# (306 con 18 squadre, 380 con 20; la stagione in corso è parziale)
+
+risultati |>
+  count(Stagione) |>
+  print(n = Inf)
+
+
+# ---- 7. Salvo il risultato ---------------------------------------------------
+
+write_csv(risultati, "serie_a_1993_oggi.csv")
+
+```
+
+
+## Parte 3
+
+Analizzando il dataset, si capisce che ogni osservazione rappresenta una partita:
+La stagione, la data, la squadra di casa e trasferta e il risultato della partita (come gol fatti da entrambe le squadre).
+```{r}
+#caricare librerie nel blocco di codice in alto
+df = read_csv("serie_a_1993_oggi.csv")
+df
+```
+
+Creo due dataframe distinti, uno per le partite in casa e uno per quelle in trasferta.
+Calcolo le varie statistiche e poi le unisco in un unico dataframe.
+```{r}
+
+#faccio un groupby per stagione e team in casa, poi vado a calcolare le statistiche, sfruttando le ultime 2 variabili.
+#Se il team in casa ha segnato più gol di quello in trasferta, allora ha vinto la partita (FTHF > FTAG) e così via
+#Poi faccio la stessa cosa per il team in trasferta, in maniera simmetrica.
+casa = df |>
+  group_by(Stagione, HomeTeam) |>
+  summarise(
+    partite = n(),
+    vittorie = sum(FTHG > FTAG),
+    pareggi = sum(FTHG == FTAG),
+    sconfitte = sum(FTHG < FTAG),
+    gol_fatti = sum(FTHG),
+    gol_subiti = sum(FTAG)
+  )
+
+trasferta = df |>
+  group_by(Stagione, AwayTeam) |>
+  summarise(
+    partite = n(),
+    vittorie = sum(FTAG > FTHG),
+    pareggi = sum(FTAG == FTHG),
+    sconfitte = sum(FTAG < FTHG),
+    gol_fatti = sum(FTAG),
+    gol_subiti = sum(FTHG)
+  )
+
+
+#faccio un fulljoin tra le due tabelle, casa e trasferta, usando il nome del team e la stagione come chiavi.
+#In questo modo ottengo un dataframe del tipo 
+#stagione | squadra | statistiche_in_casa | statistiche_in_trasferta |
+
+
+insieme = casa |>
+  full_join(
+    trasferta,
+    join_by(Stagione, HomeTeam == AwayTeam)
+  )
+
+#ora metto insieme le statistiche_casa e statistiche_trasferta in un unica variabile, e ordino per  stagione(crescente) e #punti(decrescente)
+
+
+statistiche = insieme |>
+  mutate(
+    partite = partite.x + partite.y,
+    vittorie = vittorie.x + vittorie.y,
+    pareggi = pareggi.x + pareggi.y,
+    sconfitte = sconfitte.x + sconfitte.y,
+    gol_fatti = gol_fatti.x + gol_fatti.y,
+    gol_subiti = gol_subiti.x + gol_subiti.y,
+    punti = vittorie * 3 + pareggi,  #nel calcio, una vittoria vale 3 punti e un pareggio vale 1. le sconfitte valgono 0.
+    punti_per_partita = punti / partite
+  ) |>
+  select(
+    Stagione, HomeTeam,
+    partite, vittorie, pareggi, sconfitte,
+    gol_fatti, gol_subiti,
+    punti, punti_per_partita
+  ) |>
+  arrange(Stagione, -punti)
+
+statistiche
+```
+
+Ora tengo in considerazione i dati delle squadre, mettendo insieme tutte le stagioni.
+```{r}
+statistiche_totali = statistiche |>
+  group_by(HomeTeam) |>
+  summarise(
+    partite = sum(partite),
+    vittorie = sum(vittorie),
+    pareggi = sum(pareggi),
+    sconfitte = sum(sconfitte),
+    gol_fatti = sum(gol_fatti),
+    gol_subiti = sum(gol_subiti),
+    punti = sum(punti)
+  ) |>
+  mutate(
+    punti_per_partita = punti / partite
+  )|>
+  arrange(-punti)
+
+statistiche_totali
+```
+
+
+## Parte 4
+Domande da porsi
+
+1)Quali sono le squadre più vincenti dal 93 ad oggi? (chi ha vinto più campionati in questo intervallo di tempo)
+
+2)Cosa conta di più? Fare tanti goal oppure prenderne pochi? se vince il campionato chi ha il miglior attacco o la miglior difesa.
+
+3)Come si è evoluto il calcio in italia? si segna di più? ci si difende meno? in generale, cercare un trend.
