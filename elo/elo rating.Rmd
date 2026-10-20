@@ -1,0 +1,237 @@
+---
+title: "Elo Rating"
+author: "ROCCO GREGORI"
+date: "2026-10-19"
+output: 
+ prettydoc::html_pretty:
+    theme: cayman
+    highlight: github
+    toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = TRUE,
+  fig.width = 8,
+  fig.height = 5,
+  fig.align = "center"
+)
+```
+
+```{r}
+library(tidyverse)
+library(ggplot2)
+data = read_csv("data.csv")
+```
+
+```{r}
+data
+```
+
+## Il bianco ha un vantaggio sul nero?
+Sì, fare la prima mossa sembra aiutare a vincere
+
+```{r}
+data |>
+  count(Score) |>
+  mutate(Percentage = n / sum(n)) 
+```
+
+## Calcolare i punti per ogni giocatore
+
+La funzione sarà definita in 3 'blocchi'
+
+```{r}
+compute_points = function(data){
+
+white_wins = data |>
+  group_by(White) |>
+  summarise(
+    Points = sum(Score == 1) + sum(Score==0.5)*0.5
+  )
+
+
+black_wins = data |>
+  group_by(Black) |>
+  summarise(
+    Points = sum(Score == 0) + sum(Score==0.5)*0.5
+  )
+
+
+
+total = white_wins |>
+  full_join(black_wins, join_by(White == Black)) |>
+  mutate(Points = replace_na(Points.x,0) + replace_na(Points.y,0) )|>
+  rename(Player = White) |>
+  select(Player, Points)|>
+  arrange(-Points)
+}
+```
+
+
+```{r}
+points = compute_points(data)
+points
+```
+
+Si osserva una distribuzione asimmetrica verso destra, una possibile spiegazione è che molti giocatori accumulano pochi punti, mentre pochi ne accumulano moltissimi. Potrebbero essere giocatori che hanno giocato molto oppure giocatori bravi che hanno vinto molte partite
+
+```{r}
+ggplot(points, aes(x = Points)) +
+  geom_histogram(bins = 40) +
+  labs(
+    title = "Distribuzione dei punti",
+    x = "Punti",
+    y = "Numero di giocatori"
+  )
+```
+
+## Elo somma zero e Funzione Elo
+
+calcolo intanto la funzione per calcolare Elo
+```{r}
+compute_elo = function(data, zeta = 400, kappa = 25) {
+
+  players = unique(c(data$White, data$Black))
+  ratings = rep(0, length(players))
+
+  white_index = match(data$White, players)
+  black_index = match(data$Black, players)
+
+  for (game in seq_len(nrow(data))) {
+
+    i = white_index[game]
+    j = black_index[game]
+
+    expected = 1 / (
+      1 + 10 ^ ((ratings[j] - ratings[i]) / zeta)
+    )
+
+    change = kappa * (data$Score[game] - expected)
+
+    ratings[i] = ratings[i] + change
+    ratings[j] = ratings[j] - change
+  }
+
+  total = tibble(
+    Player = players,
+    Elo = ratings
+  ) |>
+    arrange(desc(Elo))
+
+  return(total)
+}
+
+```
+se sommo tutti gli elo, ottengo un valore prossimo allo zero. (probabilmente dovuto a qualche approssimazione) però possiamo confermare che effettivamente è un gioco a somma zero.
+```{r}
+elo = compute_elo(data)
+
+sum(elo$Elo)
+```
+
+
+Disegnando l'istogramma dei punteggi, possiamo notare come la distribuzione sia leggermente assimetrica.
+Ci sono più giocatori con Elo <= 0 rispetto a quelli con Elo elevato.
+Questo può significare la presenza di molti giocatori scarsi / mediocri e pochi giocatori bravissimi.
+è diversa dalla distribuzione dei punti, perchè qui giocando si può perdere Elo mentre nel grafico di prima, uno giocatore poteva solamente aumentare il proprio punteggio, giocando il più possibile.
+```{r}
+ggplot(elo, aes(x = Elo)) +
+  geom_histogram(bins = 50) +
+  labs(
+    title = "Distribuzione dei punteggi Elo",
+    x = "Elo",
+    y = "Numero di giocatori"
+  )
+```
+
+## Correlazione tra Elo e Punti
+
+Guardando lo scatterplot tra Punti e Elo
+Sembra che le due variabili siano correlate.
+A punteggi elevati corrispondono alti Elo
+
+```{r}
+ratings = points |>
+  full_join(elo, join_by(Player))
+
+ggplot(ratings, aes(x = Points, y = Elo)) +
+  geom_point(alpha = 0.3) +
+  labs(
+    title = "Relazione tra punti ed Elo",
+    x = "Punti",
+    y = "Elo"
+  )+
+  geom_smooth()
+
+
+```
+
+C'è solo un giocatore che sia contemporaneamente nella top 10 per Elo e per Punti, ed è il giocatore 64
+```{r}
+# Seleziona i primi 10 giocatori per ciascuna classifica.
+top_points = ratings |>
+  slice_max(Points, n = 10, with_ties = FALSE)
+
+top_elo = ratings |>
+  slice_max(Elo, n = 10, with_ties = FALSE)
+
+# Trova i giocatori presenti in entrambe.
+common_players = intersect(
+  top_points$Player,
+  top_elo$Player
+)
+
+common_players
+```
+
+## Il numero di partite giocate influenza il punteggio?
+
+Il numero di partite giocate, sembrerebbe influire il numero punti. Questo però è banale, dal momento che i giocatori non possono perdere punti giocando, ma ad ogni partita possono ottenere +0, +0.5 o +1 punti. Quindi c'è un grosso incentivo nel giocare il più possibile.
+
+```{r}
+data2 = data |>
+  count(White) |>
+  full_join(
+    data |> count(Black),
+    join_by(White == Black)
+  ) |>
+  mutate(
+    Games = replace_na(n.x, 0) + replace_na(n.y, 0)
+  ) |>
+  select(Player = White, Games) |>
+  full_join(ratings, join_by(Player)) |>
+  arrange(desc(Elo))
+
+ggplot(data2, aes(x = Games, y = Points)) +
+  geom_point(alpha = 0.3) +
+  labs(
+    title ="Partite giocate influenzano i punti",
+    x = "Partite giocate",
+    y = "Punti"
+  )
+
+```
+
+
+
+Dal grafico direi che chi ha giocato più partite tende ad avere un Elo più alto, ma il numero di partite non basta a determinare il rating.
+
+- Con poche partite, molti giocatori hanno un Elo vicino a zero. Perché tutti partono da zero e hanno avuto poche occasioni per allontanarsene.
+
+-La curva blu cresce e poi si appiattisce, indicativamente oltre le 200 partite. In quella zona, però, ci sono pochi giocatori: non interpreterei la lieve discesa finale come prova che giocare troppo faccia diminuire l’Elo.
+
+```{r}
+ggplot(data2 , aes(x = Games, y = Elo)) +
+  geom_point(alpha = 0.3) +
+  labs(
+    x = "Partite giocate",
+    y = "Elo"
+  )+
+  geom_smooth()
+
+```
+
+
