@@ -1,0 +1,109 @@
+---
+title: "Concentration of S&P 500 index"
+author: 'Rocco Gregori'
+output:
+  prettydoc::html_pretty:
+    theme: cayman
+    highlight: github
+    toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(cache = TRUE, echo = TRUE, message = FALSE)
+```
+
+In this data challege we study how concentrated the S&P 500 is among its constituent companies. 
+
+1. The S&P 500 (Standard & Poor's 500) is a stock market index that tracks the performance of 500 of the largest publicly traded companies in the United States.
+2. It covers roughly 80% of the total value of the U.S. stock market.
+3. It is a market-capitalization-weighted index. Larger companies have a much bigger impact on its value than smaller components
+
+
+We will use:
+
+```{r}
+library(tidyverse)
+library(tidyquant)
+library(ineq)
+```
+
+The three packages have different roles:
+
+```text
+tidyquant    retrieve the S&P 500 constituents and weights
+tidyverse    manipulate and visualize the data
+ineq         calculate the Lorenz curve and Gini coefficient
+```
+
+Our main questions are:
+
+1. How unequal are the company weights in the S&P 500?
+2. How much of the index is represented by its largest companies?
+3. What does the Lorenz curve tell us about concentration?
+4. What is the Gini coefficient of the S&P 500 weights?
+
+
+```{r}
+sp500 = tq_index("SP500")
+```
+## 1. How unequal are the weights?
+
+```{r}
+sp500 |>
+  ggplot(aes(x = weight)) +
+  geom_histogram() +
+  labs(title = "Distribution of S&P 500 weights is assimetric",  x = "Weight", y = "Companies")
+```
+
+The mean is much larger than the median: a few companies have very large weights, while most companies have very small ones.
+```{r}
+summary(sp500$weight)
+```
+
+
+## 2. How much do the largest companies represent?
+
+We can see that the top 10 company represent 37% of the total weight.
+Top 5 shares the 27.5%
+```{r}
+#let's arrange the data by weight in desc order
+sp500 = sp500 |>
+  arrange(-weight) |>
+  select(company, weight)
+
+#let's see how much of the index the top n companies share
+sum(head(sp500$weight, 10)) / sum(sp500$weight)
+
+sum(head(sp500$weight, 5)) / sum(sp500$weight)
+```
+
+## 3. Lorenz curve
+
+The dashed line represents perfect equality. The curve lies far below it, so the index is highly concentrated.
+```{r}
+lc <- Lc(sp500$weight)
+
+df_lorenz = data.frame(p = lc$p, L=lc$L)
+
+df_lorenz |>
+  ggplot(aes(p, L)) +
+  geom_line(linewidth = 1) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+  labs(
+    title = "Lorenz curve of S&P 500 weights",
+    subtitle="index is highly concentrated",
+    x = "Cumulative share of companies",
+    y = "Cumulative share of weight"
+  ) +
+  theme_minimal()
+```
+
+
+## 4. Gini coefficient
+
+The Gini coefficient is 0.711. It confirms that the Index is strongly concentrated in its largest companies.
+```{r}
+Gini(sp500$weight)
+```
+
+
