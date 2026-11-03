@@ -1,0 +1,190 @@
+---
+title: "Stablecoins — compare USDC, USDT and DAI transaction sizes and volumes"
+author: 'Rocco Gregori'
+output:
+  prettydoc::html_pretty:
+    theme: cayman
+    highlight: github
+    toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(cache = TRUE, message = FALSE)
+```
+
+We want to compare three major Ethereum stablecoins:
+
+-  USDC (smart contract address: 0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48)
+-  USDT (smart contract address: 0xdac17f958d2ee523a2206206994597c13d831ec7)
+-  DAI (smart contract address: 0x6b175474e89094c44da98b954eedeac495271d0f)
+
+We will investigate two questions:
+
+1. How do their transfer sizes differ?
+2. How much transfer volume does each stablecoin generate?
+
+Our workflow is:
+
+```text
+Ethereum
+   ↓
+Etherscan
+   ↓
+ERC-20 transfer events
+   ↓
+R / tidyverse
+   ↓
+transfer sizes + transfer volumes
+```
+
+We use Etherscan to retrieve the already indexed ERC-20 transfer events. Etherscan's `tokentx` endpoint can be filtered directly by token contract, so we do not need to download unrelated ERC-20 transfers first.
+
+We use the term transfer rather than transaction throughout the lab: one Ethereum transaction can generate several ERC-20 transfer events.
+
+```{r}
+library(tidyverse)
+library(httr2)
+```
+
+## Download and Cleaning the data
+
+For each token, download its last 10 000 transfers (which is the maximum Etherscan returns).
+
+```{r}
+get_token_transfers <- function(contract,
+                                api_key = Sys.getenv("ETHERSCAN_API_KEY"),
+                                start_block = 0,
+                                end_block = 99999999,
+                                offset = 1000) {
+  page <- 1
+  transfers <- list()
+
+  repeat {
+    message("Downloading page ", page, "...")
+
+    response <- request("https://api.etherscan.io/v2/api") |>
+      req_url_query(
+        chainid = 1,
+        module = "account",
+        action = "tokentx",
+        contractaddress = contract,
+        startblock = start_block,
+        endblock = end_block,
+        page = page,
+        offset = offset,
+        sort = "desc",
+        apikey = api_key
+      ) |>
+      req_perform() |>
+      resp_body_json(simplifyVector = TRUE)
+
+    if (is.character(response$result)) {
+      break
+    }
+
+    transfers[[page]] <- as_tibble(response$result)
+
+    if (nrow(transfers[[page]]) < offset) {
+      break
+    }
+
+    if (page == 10) {
+      break
+    }
+
+    page <- page + 1
+  }
+
+  bind_rows(transfers)
+}
+```
+
+```{r eval=FALSE}
+usdc <- get_token_transfers("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48")
+usdt <- get_token_transfers("0xdac17f958d2ee523a2206206994597c13d831ec7")
+dai  <- get_token_transfers("0x6b175474e89094c44da98b954eedeac495271d0f")
+
+write_csv(bind_rows(usdc, usdt, dai), "stablecoins.csv")
+```
+
+```{r}
+transfers <- read_csv("stablecoins.csv")
+```
+
+
+```{r}
+transfers <- transfers |>
+  transmute(
+    token = tokenSymbol,
+    time = as.POSIXct(as.numeric(timeStamp), origin = "1970-01-01", tz = "UTC"),
+    hash,
+    from,
+    to,
+    amount = as.numeric(value) / 10^as.numeric(tokenDecimal)
+  ) |>
+  filter(amount > 0)
+
+count(transfers, token, sort = TRUE)
+```
+
+## 1. Transfer sizes
+
+```{r}
+usdc_stats <- transfers |>
+  filter(token == "USDC") |>
+  summarise(token = "USDC", n = n(), median = median(amount),
+            mean = mean(amount), volume = sum(amount))
+
+usdt_stats <- transfers |>
+  filter(token == "USDT") |>
+  summarise(token = "USDT", n = n(), median = median(amount),
+            mean = mean(amount), volume = sum(amount))
+
+dai_stats <- transfers |>
+  filter(token == "DAI") |>
+  summarise(token = "DAI", n = n(), median = median(amount),
+            mean = mean(amount), volume = sum(amount))
+
+stats <- bind_rows(usdc_stats, usdt_stats, dai_stats)
+
+stats
+```
+
+The mean is much bigger than the median for all three tokens. This means that most transfers are small
+I use a log scale because the amounts are very skewed:
+
+```{r}
+transfers |>
+  filter(token == "USDC") |>
+  ggplot(aes(amount)) +
+  geom_histogram(bins = 50) +
+  scale_x_log10() +
+  labs(title = "USDC", x = "Amount in USD (log scale)", y = "Number of transfers") +
+  theme_minimal()
+
+transfers |>
+  filter(token == "USDT") |>
+  ggplot(aes(amount)) +
+  geom_histogram(bins = 50) +
+  scale_x_log10() +
+  labs(title = "USDT", x = "Amount in USD (log scale)", y = "Number of transfers") +
+  theme_minimal()
+
+transfers |>
+  filter(token == "DAI") |>
+  ggplot(aes(amount)) +
+  geom_histogram(bins = 50) +
+  scale_x_log10() +
+  labs(title = "DAI", x = "Amount in USD (log scale)", y = "Number of transfers") +
+  theme_minimal()
+```
+
+## 2. Transfer volumes
+
+```{r}
+stats |>
+  mutate(share = volume / sum(volume)) |>
+  select(token, n, volume, share)
+```
+
+
