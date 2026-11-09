@@ -1,0 +1,168 @@
+---
+title: "Qualità dei diamanti"
+author: "Rocco Gregori"
+output:
+  prettydoc::html_pretty:
+    theme: cayman
+    highlight: github
+    toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(cache=TRUE, message=FALSE, warning=FALSE, fig.align='center')
+```
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(modelr)
+```
+
+
+## 1. Il paradosso
+
+Confrontiamo la distribuzione del prezzo per ogni livello di qualità con dei boxplot:
+
+```{r}
+ggplot(data = diamonds) +
+  geom_boxplot(mapping = aes(x = cut, y = price)) +
+  labs(x = "Qualità Taglio (crescente)", y = "Prezzo ") +
+  theme_classic()
+
+ggplot(data = diamonds) +
+  geom_boxplot(mapping = aes(x = color, y = price)) +
+  labs(x = "Qualità Colore (decrescente) ", y = "Prezzo ") +
+  theme_classic()
+
+ggplot(data = diamonds) +
+  geom_boxplot(mapping = aes(x = clarity, y = price)) +
+  labs(x = "Purezza (crescente)", y = "Prezzo ") +
+  theme_classic()
+```
+
+Anche le mediane lo confermano:
+
+```{r}
+diamonds |>
+  group_by(cut) |>
+  summarise(n = n(), prezzo_mediano = median(price))
+
+diamonds |>
+  group_by(color) |>
+  summarise(n = n(), prezzo_mediano = median(price))
+
+diamonds |>
+  group_by(clarity) |>
+  summarise(n = n(), prezzo_mediano = median(price))
+```
+
+I diamanti di qualità peggiore hanno prezzi mediani più alti di quelli migliori. 
+Il peso (carati) del diamante è il fattore che più di tutti determina il prezzo:
+
+```{r}
+ggplot(data = diamonds) +
+  geom_point(mapping = aes(x = carat, y = price), alpha = 0.05) +
+  labs(title="il prezzo cresce esponenzialmente", x = "Carati", y = "Prezzo ") +
+  theme_classic()
+```
+
+E i diamanti di bassa qualità tendono a essere più grandi:
+
+```{r}
+ggplot(data = diamonds) +
+  geom_boxplot(mapping = aes(x = cut, y = carat)) +
+  labs(x = "Qualità Taglio (crescente)", y = "Carati") +
+  theme_classic()
+
+ggplot(data = diamonds) +
+  geom_boxplot(mapping = aes(x = color, y = carat)) +
+  labs(x = "Qualità Colore (decrescente)", y = "Carati") +
+  theme_classic()
+
+ggplot(data = diamonds) +
+  geom_boxplot(mapping = aes(x = clarity, y = carat)) +
+  labs(x = "Purezza (crescente)", y = "Carati") +
+  theme_classic()
+```
+
+```{r}
+diamonds |>
+  group_by(clarity) |>
+  summarise(carati_mediani = median(carat), prezzo_mediano = median(price))
+```
+
+i diamanti di bassa qualità costano di più non perché sono di bassa qualità, ma perché in media sono più pesanti. 
+
+## 2. Modello 
+
+Usiamo tutti i diamanti del dataset e passiamo al logaritmo in base 2 di prezzo e carati, perché in scala logaritmica la relazione diventa lineare.
+
+```{r}
+diamonds2 = diamonds |>
+  mutate(lprice = log2(price), lcarat = log2(carat))
+
+ggplot(data = diamonds2) +
+  geom_point(mapping = aes(x = lcarat, y = lprice), alpha = 0.05) +
+  labs(x = "log2(carati)", y = "log2(prezzo)") +
+  theme_classic()
+```
+
+
+```{r}
+mod_carat = lm(lprice ~ lcarat, data = diamonds2)
+
+mod_carat$coefficients
+summary(mod_carat)$r.squared
+```
+
+Il peso da solo spiega circa il 93% della variabilità del (log) prezzo. 
+
+```{r}
+ggplot(data = diamonds2, mapping = aes(x = lcarat, y = lprice)) +
+  geom_point(alpha = 0.05) +
+  geom_smooth(method = "lm", se = FALSE, colour = "red") +
+  labs(x = "log2(carati)", y = "log2(prezzo)") +
+  theme_classic()
+```
+
+
+
+I residui dicono quanto un diamante costa in più o in meno rispetto a quanto ci si aspetterebbe dal suo peso. Poiché sono in scala log2, un residuo di +1 significa che il diamante costa il doppio del previsto, -1 la metà.
+
+```{r}
+diamonds2 = diamonds2 |>
+  add_residuals(mod_carat, "lresid")
+
+ggplot(data = diamonds2) +
+  geom_point(mapping = aes(x = lcarat, y = lresid), alpha = 0.05) +
+  labs(x = "log2(carati)", y = "Residuo") +
+  theme_classic()
+```
+
+Il pattern forte del peso è stato rimosso. Ora rifacciamo i grafici iniziali usando i residui al posto del prezzo:
+
+```{r}
+ggplot(data = diamonds2) +
+  geom_boxplot(mapping = aes(x = cut, y = lresid)) +
+  labs(x = "Taglio", y = "Residuo (log2)") +
+  theme_classic()
+
+ggplot(data = diamonds2) +
+  geom_boxplot(mapping = aes(x = color, y = lresid)) +
+  labs(x = "Colore (Qualità decrescente)", y = "Residuo (log2)") +
+  theme_classic()
+
+ggplot(data = diamonds2) +
+  geom_boxplot(mapping = aes(x = clarity, y = lresid)) +
+  labs(x = "Purezza (crescente)", y = "Residuo (log2)") +
+  theme_classic()
+```
+
+```{r}
+diamonds2 |>
+  group_by(clarity) |>
+  summarise(residuo_mediano = median(lresid))
+```
+
+A parità di peso, il prezzo cresce con la qualità.
+
