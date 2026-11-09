@@ -1,0 +1,86 @@
+---
+title: "Come è cambiata l'aspettativa di vita nel tempo per ogni continente?"
+author: "Rocco Gregori"
+output:
+  prettydoc::html_pretty:
+    theme: cayman
+    highlight: github
+    toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(cache=TRUE, message=FALSE, warning=FALSE, fig.align='center')
+```
+
+```{r}
+library(tidyverse)
+library(gapminder)
+```
+
+
+## 1. Ricavare la formula
+
+L'aspettativa di vita di un continente è  la **media pesata per la popolazione** delle aspettative di vita dei suoi paesi. 
+
+$$
+lifeExp_C = \frac{\sum_{i \in C} pop_i \cdot lifeExp_i}{\sum_{i \in C} pop_i}
+$$
+
+Lo stesso ragionamento vale per il pianeta (tutti i paesi).
+
+$$
+lifeExp_{mondo} = \frac{\sum_{i} pop_i \cdot lifeExp_i}{\sum_{i} pop_i}
+                = \frac{\sum_{C} pop_C \cdot lifeExp_C}{\sum_{C} pop_C}
+$$
+
+
+## 2. Aspettativa di vita per continente
+
+```{r}
+continent_lifexp <- gapminder |>
+  mutate(pop = as.numeric(pop)) |>
+  group_by(continent, year) |>
+  summarise(
+    n_countries  = n(),
+    pop_tot      = sum(pop),
+    lifeExp   = sum(lifeExp * pop) / sum(pop)  #media pesata per popolazione
+  )
+
+continent_lifexp
+```
+
+```{r}
+ggplot(continent_lifexp, aes(year, lifeExp, colour = continent)) +
+  geom_line(linewidth = 1) +
+  geom_point() +
+  labs(title = "Aspettativa di vita per continente ",
+       x = "Anno", y = "Aspettativa di vita ", colour = "Continente") +
+  theme_classic()
+```
+
+
+## 3. Aspettativa di vita dell'intero pianeta
+
+```{r}
+world_lifexp <- gapminder |>
+  mutate(pop = as.numeric(pop)) |>
+  group_by(year)  |>
+  summarise(
+    pop_tot      = sum(pop),
+    lifeExp  = sum(lifeExp * pop) / sum(pop)
+  )
+
+world_lifexp
+```
+
+
+```{r}
+ggplot(world_lifexp, aes(year, lifeExp)) +
+  geom_line(linewidth = 1.2) +
+  geom_point() +
+  labs(title = "Aspettativa di vita mondiale",
+       x = "Anno", y = "Aspettativa di vita") +
+  theme_classic()
+```
+
+
